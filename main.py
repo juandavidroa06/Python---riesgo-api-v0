@@ -6,85 +6,114 @@ import pickle
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException
 
 import config
-from dominio import EvaluadorRiesgo, buscar_siniestro, cargar_siniestros
+from dominio import EvaluadorRiesgo, RegistroEvaluaciones, RepositorioSiniestros
+from esquemas import (
+    ConteoLineasRespuesta,
+    PingRespuesta,
+    RespuestaHistorial,
+    RespuestaPuntuacion,
+    ReservaAgregadaRespuesta,
+    SaludRespuesta,
+    Siniestro,
+    SolicitudPuntuacion,
+    TarifaReferenciaRespuesta,
+)
 
 BASE = Path(__file__).parent
-app = FastAPI(title="Riesgo API", version="0.1.0")
 
 
-@app.post("/score")
-async def score(payload: dict):
-    if "poliza" not in payload:
-        return {"error": "falta el campo poliza"}
+def cargar_modelo(ruta):
+    with open(ruta, "rb") as fh:
+        return pickle.load(fh)
 
-    assert payload["monto"] > 0, "el monto debe ser positivo"
 
-    if payload.get("antiguedad", 0) < 0:
-        return {"error": "la antigüedad no puede ser negativa"}
+# B6: las dependencias pesadas se construyen UNA VEZ al arrancar el proceso,
+# nunca dentro de un handler. pickle solo se usa para LEER el artefacto
+# confiado del modelo (B3 prohíbe serializar hacia el cliente).
+MODELO = cargar_modelo(BASE / config.RUTA_MODELO)
+REPOSITORIO_SINIESTROS = RepositorioSiniestros(BASE / config.RUTA_DATOS)
+REGISTRO_EVALUACIONES = RegistroEvaluaciones()
 
-    with open(BASE / config.RUTA_MODELO, "rb") as fh:
-        modelo = pickle.load(fh)
+app = FastAPI(title="Riesgo API", version="0.2.0")
 
-    evaluador = EvaluadorRiesgo(payload["poliza"])
-    puntaje = evaluador.puntuar(modelo, payload)
+
+@app.post("/score", response_model=RespuestaPuntuacion)
+async def score(solicitud: SolicitudPuntuacion):
+    # La validación declarativa (B5) es responsabilidad de Pydantic:
+    # cualquier entrada inválida nunca llega aquí; FastAPI responde 422.
+    evaluador = EvaluadorRiesgo(
+        solicitud.poliza,
+        modelo=MODELO,
+        registro=REGISTRO_EVALUACIONES,
+    )
+    puntaje = evaluador.puntuar(solicitud.model_dump())
     evaluador.anotar(puntaje)
+    return RespuestaPuntuacion(
+        poliza=solicitud.poliza,
+        puntaje=puntaje,
+        alto_riesgo=evaluador.es_alto_riesgo(puntaje),
+    )
 
-    return {
-        "poliza": payload["poliza"],
-        "puntaje": puntaje,
-        "alto_riesgo": evaluador.es_alto_riesgo(puntaje),
-    }
 
-
-@app.get("/historial")
+@app.get("/historial", response_model=RespuestaHistorial)
 async def historial():
-    return {"evaluaciones": EvaluadorRiesgo.historial}
+    return RespuestaHistorial(evaluaciones=REGISTRO_EVALUACIONES.todas())
 
 
-@app.get("/siniestros/{id_siniestro}")
+@app.get("/siniestros/{id_siniestro}", response_model=Siniestro)
 async def siniestro(id_siniestro: int):
-    fila = buscar_siniestro(id_siniestro)
+    fila = REPOSITORIO_SINIESTROS.obtener(id_siniestro)
     if fila is None:
-        return {"error": f"no existe el siniestro {id_siniestro}"}
-    return fila
+        # B2: el error viaja en el estado (404), no en el cuerpo con 200.
+        raise HTTPException(status_code=404, detail=f"no existe el siniestro {id_siniestro}")
+    return Siniestro(**fila)
 
 
-@app.get("/exportar")
+@app.get("/exportar", response_model=list[Siniestro])
 async def exportar():
-    datos = cargar_siniestros()
-    return Response(pickle.dumps(datos), media_type="application/octet-stream")
+    # B3: JSON, nunca pickle hacia el cliente.
+    return [Siniestro(**fila) for fila in REPOSITORIO_SINIESTROS.todos()]
+
+
+# B7: comprobación de vida del servicio.
+@app.get("/health", response_model=SaludRespuesta)
+async def health():
+    return SaludRespuesta(status="ok")
 
 
 # --- Endpoints de perfil de carga -----------------------------------------
+# Su declaración sync/async se decide con mediciones en la Parte C.
 
-@app.get("/ping")
+@app.get("/ping", response_model=PingRespuesta)
 async def ping():
-    return {"pong": True}
+    return PingRespuesta(pong=True)
 
 
-@app.get("/consulta-archivo")
+@app.get("/consulta-archivo", response_model=ConteoLineasRespuesta)
 async def consulta_archivo():
     contenido = (BASE / config.RUTA_DATOS).read_text(encoding="utf-8")
-    return {"lineas": len(contenido.splitlines())}
+    return ConteoLineasRespuesta(lineas=len(contenido.splitlines()))
 
 
-@app.get("/servicio-externo")
+@app.get("/servicio-externo", response_model=TarifaReferenciaRespuesta)
 async def servicio_externo():
     time.sleep(0.3)
-    return {"tarifa_referencia": 1.18}
+    return TarifaReferenciaRespuesta(tarifa_referencia=1.18)
 
 
-@app.get("/calculo-pesado")
+@app.get("/calculo-pesado", response_model=ReservaAgregadaRespuesta)
 async def calculo_pesado():
     total = 0.0
     for i in range(3_000_000):
         total += (i % 7) ** 0.5
-    return {"total": round(total, 2)}
+    return ReservaAgregadaRespuesta(total=round(total, 2))
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    # B8: arranque de producción — sin --reload, con --workers.
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, workers=2)

@@ -7,34 +7,47 @@ declarado termine en un pago alto.
 ## Instalación
 
 ```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 ```
 
-El modelo entrenado (`modelo.pkl`) viene en el repositorio.
+Las dependencias están fijadas con `==` para que el entorno sea reproducible.
+`modelo.pkl` viene en el repositorio: es el artefacto entrenado con
+scikit-learn 1.7.2 y el servicio lo necesita para arrancar.
 
 ## Puesta en marcha
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
 ```
 
-El mismo comando sirve en el servidor de producción. `--reload` es cómodo
-porque recoge los cambios sin reiniciar a mano.
+Ese es el arranque de producción: **sin `--reload`** (la recarga en caliente
+no es apta para producción) y **con `--workers`**.
+
+## Variables de entorno
+
+Los secretos no viven en el código. Si tu despliegue los necesita, copia
+`.env.example` a `.env`, completa los valores y cárgalos en el entorno.
+`.env` está ignorado por Git.
 
 ## Endpoints
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| POST | `/score` | Puntúa una póliza |
+| POST | `/score` | Puntúa una póliza · 422 si la entrada es inválida |
 | GET | `/historial` | Evaluaciones hechas |
-| GET | `/siniestros/{id}` | Consulta un siniestro |
-| GET | `/exportar` | Exporta el histórico para el equipo de actuaría |
+| GET | `/siniestros/{id}` | Consulta un siniestro · 404 si no existe |
+| GET | `/exportar` | Exporta el histórico en JSON para actuaría |
+| GET | `/health` | Comprobación de vida del servicio |
 | GET | `/ping` | Comprobación rápida |
 | GET | `/consulta-archivo` | Cuenta los registros del archivo de siniestros |
 | GET | `/servicio-externo` | Consulta la tarifa de referencia del reasegurador |
 | GET | `/calculo-pesado` | Recalcula la reserva agregada |
 
-### Ejemplo
+### Ejemplos
+
+Caso válido:
 
 ```bash
 curl -X POST localhost:8000/score \
@@ -46,7 +59,17 @@ curl -X POST localhost:8000/score \
 {"poliza": "POL-2026-0413", "puntaje": 0.61, "alto_riesgo": false}
 ```
 
-## Notas
+Caso inválido — el error viaja en el estado HTTP (422), nunca en el cuerpo
+con 200:
 
-- La clave de la API está en `config.py` para que el equipo pueda probar sin configurar nada.
-- El histórico se exporta con `pickle`, que conserva los tipos de Python tal cual.
+```bash
+curl -i -X POST localhost:8000/score \
+  -H "Content-Type: application/json" \
+  -d '{"monto": -5}'
+```
+
+## Tests
+
+```bash
+pytest -v
+```

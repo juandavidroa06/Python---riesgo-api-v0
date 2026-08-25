@@ -1,1 +1,22 @@
-*.pyc
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Entorno y secretos (nunca versionados)
+.env
+
+# Herramientas
+.pytest_cache/
+.coverage
+htmlcov/
+
+# SO / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Apuntes de estudio (semanas 1-5)
+*.html

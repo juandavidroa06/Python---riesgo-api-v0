@@ -1,12 +1,18 @@
 """Utilidades transversales del servicio."""
+import functools
+import logging
+
+logger = logging.getLogger("riesgo-api")
 
 
 def con_registro(func):
-    """Registra la llamada y evita que un fallo tumbe el servicio."""
+    """Registra la ejecución en el log y PROPAGA cualquier excepción.
+
+    Restricción B9: conserva la identidad de la función envuelta
+    (functools.wraps) y jamás captura un fallo para devolver None.
+    """
+    @functools.wraps(func)
     def envoltura(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as exc:
-            print(f"[registro] {func.__name__} falló: {exc}")
-            return None
+        logger.info("ejecutando %s", func.__name__)
+        return func(*args, **kwargs)
     return envoltura
