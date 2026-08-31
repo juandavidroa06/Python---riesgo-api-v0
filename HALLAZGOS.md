@@ -41,13 +41,53 @@
 
 # Parte C — Interpretación de las mediciones
 
-> Un párrafo por endpoint. Expliquen **los tiempos que ustedes obtuvieron**, no la
-> teoría general. Si un resultado los sorprendió, dígan­lo: eso se premia.
+**/ping** — Clasificación: trivial. Decisión: `async def`.
+No hace trabajo de I/O ni de CPU, así que su tiempo de respuesta es
+prácticamente constante sin importar la concurrencia: p50 pasó de 1.6 ms
+(concurrencia 1) a 19.0 ms (concurrencia 20), y p95 de 2.4 ms a 41.8 ms.
+El pequeño aumento se explica por overhead de scheduling del event loop
+al atender 20 peticiones a la vez, no por trabajo real. `async def` es la
+decisión correcta y no requirió ningún cambio de código.
 
-## `/ping`
+**/consulta-archivo** — Clasificación: IO-bound. Decisión: `def`.
+Con `read_text()` bloqueante dentro de un `async def` (versión original),
+la concurrencia empeoraba el tiempo total. Al declararlo `def`, FastAPI lo
+despacha a un thread pool: el tiempo_total_s con concurrencia 20 (0.104 s)
+quedó ligeramente por debajo del de concurrencia 1 (0.109 s). El p50 y el
+p95 sí suben con la concurrencia (2.1→27.3 ms, 2.8→49.2 ms), pero es el
+overhead normal de repartir 20 peticiones entre hilos para un archivo tan
+pequeño, no un síntoma de bloqueo del servidor completo.
 
-## `/consulta-archivo`
+**/servicio-externo** — Clasificación: IO-bound. Decisión: `async def`.
+Esta es la evidencia más clara de que "IO va con async" funciona cuando el
+`await` es real. Con `time.sleep(0.3)` bloqueante (versión original), 20
+peticiones concurrentes se encolaban una tras otra. Con `await
+asyncio.sleep(0.3)`, el tiempo_total_s con concurrencia 20 cayó a 0.957 s
+frente a 15.109 s con concurrencia 1 — las 20 esperas de red se solapan de
+verdad. El p50 (319.7 ms) y el p95 (332.1 ms) se mantienen casi idénticos
+entre sí y cercanos a los 300 ms base del `sleep`, sin cola: la prueba de
+que aquí sí hay concurrencia real.
 
-## `/servicio-externo`
-
-## `/calculo-pesado`
+**/calculo-pesado** — Clasificación: CPU-bound. Decisión: `def`.
+Corrimos esta medición tres veces con `def` para confirmar el patrón, y
+resultó más matizado de lo que parecía en la primera corrida. El
+tiempo_total_s con concurrencia 20 fue consistentemente MENOR que con
+concurrencia 1 en las tres corridas (18.305 vs 19.340 s; 14.643 vs 26.317 s;
+12.709 vs 19.729 s) — es decir, sí hay una ganancia real de throughput
+agregado al repartir el cálculo entre varios hilos del pool. Sin embargo,
+el p50 con concurrencia 20 fue entre 12 y 19 veces peor que con
+concurrencia 1 en las tres corridas (357→7033 ms; 448→5704 ms; 374→4561 ms).
+Esta combinación —throughput agregado algo mejor, latencia individual
+mucho peor— es la firma típica del GIL: los 20 hilos sí logran que el
+conjunto de peticiones termine antes en total (porque un hilo puede
+avanzar mientras otro espera su turno de intérprete), pero cada petición
+individual tarda mucho más en completarse porque compite constantemente
+por el GIL con las otras 19. Un usuario esperando una sola respuesta
+percibiría el servicio como mucho más lento bajo carga, aunque el sistema
+en conjunto procese el lote algo más rápido. Para lograr paralelismo real
+—mejor throughput SIN penalizar la latencia individual— haría falta un
+`ProcessPoolExecutor` en vez de un thread pool, porque cada proceso evade
+el GIL al tener su propio intérprete; no lo implementamos porque `def` ya
+resuelve el defecto original más grave (bloquear el servidor completo
+para otras rutas) y el taller no exige la solución de máximo rendimiento,
+solo coherencia entre clasificación, decisión y evidencia medida.
