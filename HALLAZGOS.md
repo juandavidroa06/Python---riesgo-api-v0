@@ -1,6 +1,6 @@
 # Hallazgos — Parte A
 
-**Grupo:** <número> · **Integrantes:** <nombre 1>, <nombre 2>, <nombre 3>
+ **Integrantes:** Laura Rodríguez y Juan Roa
 
 > No borren la fila de ejemplo hasta haber comprobado que su tabla se parsea.
 > El formato es rígido: siete columnas, en este orden. Una tabla torcida se

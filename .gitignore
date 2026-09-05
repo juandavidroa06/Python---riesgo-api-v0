@@ -20,3 +20,4 @@ Thumbs.db
 
 # Apuntes de estudio (semanas 1-5)
 *.html
+.Rhistory
