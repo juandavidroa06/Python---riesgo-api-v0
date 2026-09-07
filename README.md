@@ -8,8 +8,13 @@ declarado termine en un pago alto.
 
 ```bash
 python -m venv .venv
-source .env/bin/activate       # Linux/Mac
-.venv\Scripts\activate          # Windows
+
+# Linux / macOS
+source .venv/bin/activate
+
+# Windows
+.venv\Scripts\activate
+
 pip install -r requirements.txt
 ```
 

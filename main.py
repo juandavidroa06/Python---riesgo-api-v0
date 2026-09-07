@@ -95,24 +95,28 @@ async def ping():
     return PingRespuesta(pong=True)
 
 
-@app.get("/consulta-archivo")
+@app.get("/consulta-archivo", response_model=ConteoLineasRespuesta)
 def consulta_archivo():
     contenido = (BASE / config.RUTA_DATOS).read_text(encoding="utf-8")
-    return {"lineas": len(contenido.splitlines())}
+    return ConteoLineasRespuesta(
+        lineas=len(contenido.splitlines())
+    )
 
 
-@app.get("/servicio-externo")
+@app.get("/servicio-externo", response_model=TarifaReferenciaRespuesta)
 async def servicio_externo():
     await asyncio.sleep(0.3)
-    return {"tarifa_referencia": 1.18}
+    return TarifaReferenciaRespuesta(tarifa_referencia=1.18)
 
 
-@app.get("/calculo-pesado")
+@app.get("/calculo-pesado", response_model=ReservaAgregadaRespuesta)
 def calculo_pesado():
     total = 0.0
+
     for i in range(3_000_000):
         total += (i % 7) ** 0.5
-    return {"total": round(total, 2)}
+
+    return ReservaAgregadaRespuesta(total=round(total, 2))
 
 
 
